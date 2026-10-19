@@ -8,10 +8,12 @@ embeddings function declared async.
 """
 
 import base64
+import time
 from fastapi import Request
 import numpy as np
 from common.logger import xlogger
 from common.networking import request_tag
+from common.stats import stats as stats_ledger
 
 from common import model
 from endpoints.OAI.types.embedding import (
@@ -44,6 +46,8 @@ async def get_embeddings(data: EmbeddingsRequest, request: Request) -> dict:
     if not isinstance(data.input, list):
         data.input = [data.input]
 
+    started = time.time()
+
     embedding_data = await model.embeddings_container.generate(data.input)
 
     # OAI expects a return of base64 if the input is base64
@@ -58,6 +62,10 @@ async def get_embeddings(data: EmbeddingsRequest, request: Request) -> dict:
     ]
 
     usage = embedding_data.get("usage")
+    stats_ledger.record_embeddings(
+        tokens=usage, inputs=len(data.input), seconds=time.time() - started
+    )
+
     response = EmbeddingsResponse(
         data=embedding_object,
         model=model_path.name,

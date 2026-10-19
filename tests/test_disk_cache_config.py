@@ -84,7 +84,7 @@ def summary_with(stats):
     from common.status_display import StatusDisplay
 
     display = StatusDisplay()
-    display._cache_stats = lambda: stats
+    display.cache_stats = lambda: stats
     model_container = SimpleNamespace(loaded=True)
     saved = model.container
     model.container = model_container

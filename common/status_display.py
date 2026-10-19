@@ -206,7 +206,7 @@ class StatusDisplay:
     # Rendering
 
     @staticmethod
-    def _cache_stats() -> Optional[dict]:
+    def cache_stats() -> Optional[dict]:
         """Cache statistics from the backend, or None when it doesn't provide them."""
 
         from common import model
@@ -229,7 +229,7 @@ class StatusDisplay:
             line.append("No model loaded", style="dim")
             return line
 
-        stats = self._cache_stats()
+        stats = self.cache_stats()
         queued = 0
         if stats:
             max_tokens = stats["max_tokens"]

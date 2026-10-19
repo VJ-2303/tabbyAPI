@@ -49,6 +49,7 @@ from common.multimodal import MultimodalEmbeddingWrapper
 from common.networking import DisconnectHandler
 from common.optional_dependencies import check_package_version
 from common.sampling import BaseSamplerRequest
+from common.stats import stats as stats_ledger
 from common.status_display import status_display
 from common.tabby_config import config
 from common.templating import PromptTemplate, find_prompt_template
@@ -2162,6 +2163,9 @@ class ExllamaV3Container:
         prefill_start_time: float | None = None
         prefill_cached_tokens = 0
 
+        # Corrected by the except blocks below if the job doesn't run to completion
+        outcome = "finished"
+
         # Get the generation status once it's ready
         try:
             async for result in job:
@@ -2271,10 +2275,14 @@ class ExllamaV3Container:
                     break
 
         except CancelledError:
+            outcome = "cancelled"
+
             if not job.cancelled:
                 await job.cancel()
 
         except Exception as ex:
+            outcome = "failed"
+
             await self._recover_from_generation_error(ex, job)
 
             if isinstance(ex, AssertionError) and "cannot be enqueued" in str(ex):
@@ -2307,3 +2315,13 @@ class ExllamaV3Container:
                     context_len,
                     self.max_seq_len,
                 )
+
+            # Count the request whether it finished, failed or was cancelled
+            stats_ledger.record_generation(
+                metrics_result,
+                model=self.model_dir.name,
+                label=label,
+                context_len=context_len,
+                max_seq_len=self.max_seq_len,
+                outcome=outcome,
+            )

@@ -17,6 +17,7 @@ from common.multimodal import MultimodalEmbeddingWrapper
 from common.networking import handle_request_error
 from common import sampling
 from common.sampling import BaseSamplerRequest
+from common.stats import stats as stats_ledger
 from common.status_display import status_display
 from common.tabby_config import config
 from common.optional_dependencies import dependencies
@@ -309,6 +310,9 @@ async def load_model_gen(model_path: pathlib.Path, request_wins: bool = False, *
                 raise
             finally:
                 progress.stop()
+
+        # The model is loaded: count it under its own name in the statistics
+        stats_ledger.record_model_load(model_path.name)
 
         # Sampler overrides for this model, replacing the previous model's layer
         if sampler_preset or sampler_inline:
