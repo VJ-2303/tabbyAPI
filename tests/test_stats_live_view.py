@@ -108,7 +108,7 @@ class ModelViewTests(unittest.TestCase):
         self.assertEqual(view["use_vision"], False)
         self.assertEqual(view["n_ctx_train"], 8192)
         self.assertEqual(view["size_bytes"], 4_000_000_000)
-        self.assertEqual(view["path"], "/models/llama-8b")
+        self.assertEqual(view["path"], str(Path("/models/llama-8b")))
 
     def test_a_model_that_cannot_describe_itself_reports_nothing(self):
         container = loaded_container(error=RuntimeError("unloaded mid-request"))

@@ -30,6 +30,8 @@ def test_listener_on_the_same_address_is_reported(free_port):
 
 def test_wildcard_listener_blocks_a_specific_bind(free_port):
     with socket.socket() as taken:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            taken.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
         taken.bind(("0.0.0.0", free_port))
         taken.listen()
         assert port_bind_error("127.0.0.1", free_port) is not None

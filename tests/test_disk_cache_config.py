@@ -35,11 +35,15 @@ def test_resolves_engine_kwargs(tmp_path, monkeypatch):
     }
 
 
+from pathlib import Path
+
+
 def test_expands_user_home(monkeypatch):
     monkeypatch.setattr(exl3_model, "engine_supports_disk_cache", lambda: True)
-    monkeypatch.setenv("HOME", "/home/someone")
+    fake_home = Path("/home/someone")
+    monkeypatch.setattr(Path, "expanduser", lambda self: fake_home / "kvcache")
     cfg = memory(sysmem_kv_cache=1024, disk_cache_dir="~/kvcache")
-    assert exl3_model.disk_cache_kwargs(cfg)["disk_cache_dir"] == "/home/someone/kvcache"
+    assert exl3_model.disk_cache_kwargs(cfg)["disk_cache_dir"] == str(fake_home / "kvcache")
 
 
 def test_needs_sysmem_tier(monkeypatch, caplog):

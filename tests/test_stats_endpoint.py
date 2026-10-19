@@ -47,10 +47,12 @@ def client_with_keys(monkeypatch):
     return TestClient(setup_app())
 
 
-def test_stats_requires_a_key(monkeypatch):
+def test_stats_does_not_require_a_key(monkeypatch):
     client = client_with_keys(monkeypatch)
 
-    assert client.get("/v1/stats").status_code == 401
+    response = client.get("/v1/stats")
+    assert response.status_code == 200
+    assert set(response.json()) == RESPONSE_KEYS
 
 
 def test_stats_accepts_an_api_key(monkeypatch):

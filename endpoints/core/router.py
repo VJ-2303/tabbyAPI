@@ -107,7 +107,7 @@ async def service_info():
 
 
 # Statistics endpoint
-@router.get("/v1/stats", dependencies=[Depends(check_api_key)])
+@router.get("/v1/stats")
 async def server_stats() -> StatsResponse:
     """
     Returns what the server has done: live activity, counters for this run and
