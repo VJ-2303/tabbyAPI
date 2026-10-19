@@ -6,7 +6,6 @@ import unittest
 from common.stats import (
     DAILY_BUCKETS,
     HOURLY_BUCKETS,
-    RECENT_MAX,
     StatsLedger,
 )
 
@@ -177,30 +176,6 @@ class BucketTests(LedgerTestCase):
         self.assertEqual(len(self.ledger.hourly), HOURLY_BUCKETS)
         self.assertEqual(len(self.ledger.daily), DAILY_BUCKETS)
 
-    async def test_recent_list_holds_newest_first_and_is_capped(self):
-        for index in range(RECENT_MAX + 5):
-            self.ledger.record_generation(metrics(gen_tokens=index), label=f"#{index}")
-
-        self.assertEqual(len(self.ledger.recent), RECENT_MAX)
-        self.assertEqual(self.ledger.recent[0]["label"], f"#{RECENT_MAX + 4}")
-        self.assertEqual(self.ledger.recent[0]["gen_tokens"], RECENT_MAX + 4)
-
-    async def test_recent_entry_carries_the_request_context(self):
-        self.ledger.record_generation(
-            metrics(), model="llama-8b", label="#12 chat/completions", context_len=500
-        )
-
-        entry = self.ledger.recent[0]
-        self.assertEqual(entry["model"], "llama-8b")
-        self.assertEqual(entry["context_len"], 500)
-        self.assertAlmostEqual(entry["gen_tokens_per_sec"], 50 / 1.2, places=2)
-        self.assertEqual(entry["finish"], "stop_token")
-
-    async def test_failed_generation_is_not_added_to_recent(self):
-        self.ledger.record_generation(None, label="#1", outcome="failed")
-
-        self.assertEqual(len(self.ledger.recent), 0)
-
 
 class PersistenceTests(LedgerTestCase):
     async def test_missing_file_loads_fresh(self):
@@ -230,7 +205,6 @@ class PersistenceTests(LedgerTestCase):
         self.assertEqual(restored.lifetime["gen_tokens"], 50)
         self.assertEqual(restored.models["llama-8b"]["loads"], 1)
         self.assertEqual(len(restored.hourly), 1)
-        self.assertEqual(len(restored.recent), 1)
         # The resumed process starts with a clean session scope
         self.assertEqual(restored.session["requests"], 0)
         self.assertEqual(restored.doc["sessions"], 2)
@@ -274,7 +248,6 @@ class SnapshotTests(LedgerTestCase):
         self.assertIsNone(snapshot["model"])
         self.assertIsNone(snapshot["live"])
         self.assertEqual(snapshot["incidents"], [])
-        self.assertEqual(snapshot["recent"], [])
         self.assertEqual(snapshot["history"]["hourly"], [])
 
     async def test_snapshot_carries_live_model_and_incident_data(self):

@@ -156,26 +156,6 @@ class StatsHistory(BaseModel):
     daily: list[StatsBucket] = Field(default_factory=list, description="Recent days")
 
 
-class StatsRecent(BaseModel):
-    """One finished generation, newest first in the list."""
-
-    time: float = Field(0.0, description="When the generation finished, Unix seconds")
-    model: Optional[str] = Field(None, description="Model that served the request")
-    label: Optional[str] = Field(None, description="Console label of the request")
-    outcome: str = Field("finished", description="finished, cancelled or failed")
-    context_len: Optional[int] = Field(None, description="Prompt length of the request")
-    max_seq_len: Optional[int] = Field(None, description="Context length of the model")
-    prompt_tokens: int = Field(0, description="Prompt tokens")
-    cached_tokens: int = Field(0, description="Prompt tokens served from cache")
-    processed_tokens: int = Field(0, description="Prompt tokens that had to be read")
-    gen_tokens: int = Field(0, description="Tokens generated")
-    gen_tokens_per_sec: Optional[float] = Field(None, description="Generation rate")
-    prompt_tokens_per_sec: Optional[float] = Field(None, description="Prompt processing rate")
-    queue_time: float = Field(0.0, description="Seconds spent queued")
-    total_time: float = Field(0.0, description="Seconds from request to finish")
-    finish: str = Field("", description="Why generation ended")
-
-
 class StatsIncident(BaseModel):
     """An error that made the service unhealthy."""
 
@@ -196,5 +176,4 @@ class StatsResponse(BaseModel):
         default_factory=list, description="Counters per model, most generated tokens first"
     )
     history: StatsHistory = Field(default_factory=StatsHistory)
-    recent: list[StatsRecent] = Field(default_factory=list, description="Recent generations")
     incidents: list[StatsIncident] = Field(default_factory=list, description="Recent errors")

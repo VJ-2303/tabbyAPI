@@ -2318,10 +2318,5 @@ class ExllamaV3Container:
 
             # Count the request whether it finished, failed or was cancelled
             stats_ledger.record_generation(
-                metrics_result,
-                model=self.model_dir.name,
-                label=label,
-                context_len=context_len,
-                max_seq_len=self.max_seq_len,
-                outcome=outcome,
+                metrics_result, model=self.model_dir.name, outcome=outcome
             )

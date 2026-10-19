@@ -32,14 +32,11 @@ class SnapshotSchemaTests(unittest.TestCase):
         self.assertEqual(response.session.requests, 0)
         self.assertEqual(response.lifetime.requests, 0)
         self.assertEqual(response.models, [])
-        self.assertEqual(response.recent, [])
         self.assertIsNone(response.live)
         self.assertIsNone(response.model)
 
     def test_populated_snapshot_matches_the_response_model(self):
-        self.ledger.record_generation(
-            metrics(), model="llama-8b", label="#1 chat/completions", context_len=900
-        )
+        self.ledger.record_generation(metrics(), model="llama-8b")
         self.ledger.record_model_load("llama-8b")
         self.ledger.record_embeddings(tokens=120, seconds=0.3)
 
@@ -74,8 +71,6 @@ class SnapshotSchemaTests(unittest.TestCase):
         self.assertEqual(response.session.embedding_tokens, 120)
         self.assertEqual(response.models[0].name, "llama-8b")
         self.assertEqual(response.models[0].loads, 1)
-        self.assertEqual(response.recent[0].label, "#1 chat/completions")
-        self.assertEqual(response.recent[0].context_len, 900)
         self.assertEqual(response.live.jobs[0].gen_tokens_per_sec, 42.5)
         self.assertEqual(response.live.cache.max_tokens, 8192)
         self.assertEqual(response.model.max_seq_len, 8192)

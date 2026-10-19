@@ -30,7 +30,6 @@ SAVE_INTERVAL = 60.0
 # Bounded rings, so the file stays small no matter how long the server runs
 HOURLY_BUCKETS = 48
 DAILY_BUCKETS = 14
-RECENT_MAX = 50
 
 # Generation rates kept for percentiles. Rates swing too much per request for a
 # meaningful percentile from a handful of samples
@@ -169,7 +168,6 @@ class StatsLedger:
             "models": {},
             "hourly": [],
             "daily": [],
-            "recent": [],
         }
 
     @property
@@ -187,10 +185,6 @@ class StatsLedger:
     @property
     def daily(self) -> list:
         return self.doc["daily"]
-
-    @property
-    def recent(self) -> list:
-        return self.doc["recent"]
 
     @property
     def dirty(self) -> bool:
@@ -247,10 +241,6 @@ class StatsLedger:
             if isinstance(buckets, list):
                 doc[key] = [bucket for bucket in buckets if isinstance(bucket, dict)][-cap:]
 
-        recent = stored.get("recent")
-        if isinstance(recent, list):
-            doc["recent"] = [entry for entry in recent if isinstance(entry, dict)][-RECENT_MAX:]
-
         return doc
 
     async def save(self):
@@ -287,9 +277,6 @@ class StatsLedger:
         metrics: Optional[dict] = None,
         *,
         model: Optional[str] = None,
-        label: Optional[str] = None,
-        context_len: Optional[int] = None,
-        max_seq_len: Optional[int] = None,
         outcome: str = "finished",
     ):
         """
@@ -342,30 +329,6 @@ class StatsLedger:
 
         self._roll_buckets()
         self._add_to_buckets(counts, requests=1)
-
-        # A generation that never produced a finish chunk has no row worth showing
-        if metrics:
-            self.recent.insert(
-                0,
-                {
-                    "time": self._clock(),
-                    "model": model,
-                    "label": label,
-                    "outcome": outcome,
-                    "context_len": _as_int(context_len) if context_len is not None else None,
-                    "max_seq_len": _as_int(max_seq_len) if max_seq_len is not None else None,
-                    "prompt_tokens": prompt_tokens,
-                    "cached_tokens": cached_tokens,
-                    "processed_tokens": processed_tokens,
-                    "gen_tokens": gen_tokens,
-                    "gen_tokens_per_sec": _rate(gen_tokens, gen_time),
-                    "prompt_tokens_per_sec": _rate(processed_tokens, prompt_time),
-                    "queue_time": counts["queue_time"],
-                    "total_time": counts["total_time"],
-                    "finish": finish,
-                },
-            )
-            del self.recent[RECENT_MAX:]
 
         self._dirty = True
 
@@ -454,7 +417,6 @@ class StatsLedger:
                 reverse=True,
             ),
             "history": {"hourly": self.hourly, "daily": self.daily},
-            "recent": self.recent,
             "incidents": incidents or [],
         }
 

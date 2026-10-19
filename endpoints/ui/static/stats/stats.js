@@ -6,7 +6,6 @@
 const POLL_MS = 2000;
 const MAX_BACKOFF_MS = 15000;
 const SPARK_SAMPLES = 150; // five minutes at one poll every two seconds
-const MAX_RECENT_ROWS = 20;
 const HOURLY_BARS = 24;
 const STORE = "tabby-ui."; // shared with the chat client at /ui
 
@@ -596,43 +595,6 @@ function renderModels(data) {
   }
 }
 
-function renderRecent(data) {
-  const band = $("band-recent");
-  const recent = data.recent || [];
-  band.hidden = !recent.length;
-  if (!recent.length) return;
-
-  // Only worth a column when more than one model has served requests
-  const showModel = data.models.length > 1;
-  $("recent-model-head").hidden = !showModel;
-
-  const body = $("recent-body");
-  body.replaceChildren();
-
-  for (const entry of recent.slice(0, MAX_RECENT_ROWS)) {
-    const modelCell = td(entry.model || "—", "mono dim");
-    modelCell.hidden = !showModel;
-
-    body.append(
-      row([
-        td(clock(entry.time), "mono dim"),
-        td(entry.label || "—", "mono"),
-        modelCell,
-        td(`${int(entry.processed_tokens)} / ${int(entry.prompt_tokens)}`, "num opt"),
-        td(int(entry.gen_tokens), "num"),
-        td(rate(entry.gen_tokens_per_sec), "num"),
-        td(finishLabel(entry.finish), "label")
-      ])
-    );
-  }
-
-  const note = $("recent-note");
-  note.textContent =
-    recent.length > MAX_RECENT_ROWS
-      ? `showing the latest ${MAX_RECENT_ROWS} of ${int(recent.length)} kept`
-      : "";
-}
-
 function renderIncidents(data) {
   const band = $("band-incidents");
   band.hidden = !data.incidents.length;
@@ -665,7 +627,6 @@ function renderAll(data) {
   renderTotals(data);
   renderHistory(data);
   renderModels(data);
-  renderRecent(data);
   renderIncidents(data);
 }
 

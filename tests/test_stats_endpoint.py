@@ -19,7 +19,6 @@ RESPONSE_KEYS = {
     "lifetime",
     "models",
     "history",
-    "recent",
     "incidents",
 }
 
@@ -75,14 +74,13 @@ def test_stats_reports_recorded_activity(monkeypatch):
     client = client_with_keys(monkeypatch)
     before = stats_ledger.session["requests"]
 
-    stats_ledger.record_generation(generation(), model="llama-8b", label="#1")
+    stats_ledger.record_generation(generation(), model="llama-8b")
 
     body = client.get("/v1/stats", headers={"Authorization": f"Bearer {API_KEY}"}).json()
 
     assert body["session"]["requests"] == before + 1
     assert body["session"]["gen_tokens"] == 50
     assert body["session"]["processed_tokens"] == 100
-    assert body["recent"][0]["label"] == "#1"
 
 
 def test_stats_answer_without_a_model(monkeypatch):
