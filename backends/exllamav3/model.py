@@ -775,6 +775,10 @@ class ExllamaV3Container:
     def create_cache(self, raw_cache_mode: str, model: Model):
         # Cast exl2 types to exl3
         match raw_cache_mode:
+            case "Q2":
+                raw_cache_mode = "2,2"
+            case "Q3":
+                raw_cache_mode = "3,3"
             case "Q4":
                 raw_cache_mode = "4,4"
             case "Q6":
@@ -1014,10 +1018,24 @@ class ExllamaV3Container:
                 if value:
                     yield value
 
+        single_device = (
+            0
+            if (
+                torch.cuda.device_count() == 1
+                and not self.gpu_split
+                and not self.use_tp
+                and not self.draft_gpu_split
+            )
+            else None
+        )
+
         if self.use_draft_model:
             for value in self.draft_model.load_gen(
+                device=single_device,
                 reserve_per_device=(
-                    None if (self.gpu_split or self.draft_gpu_split) else self.autosplit_reserve
+                    None
+                    if (single_device is not None or self.gpu_split or self.draft_gpu_split)
+                    else self.autosplit_reserve
                 ),
                 use_per_device=self.draft_gpu_split or None,
                 callback=progress_callback,
@@ -1031,7 +1049,7 @@ class ExllamaV3Container:
             split_mode = "tensor parallel"
         elif self.gpu_split:
             split_mode = "manual GPU split"
-        elif torch.cuda.device_count() == 1:
+        elif single_device is not None:
             split_mode = "single GPU"
         else:
             split_mode = "autosplit"
@@ -1039,9 +1057,14 @@ class ExllamaV3Container:
         xlogger.info(f"Loading model {self.model_dir} ({split_mode})")
 
         for value in self.model.load_gen(
+            device=single_device,
             tensor_p=self.use_tp,
             tp_backend=self.tp_backend,
-            reserve_per_device=None if self.gpu_split else self.autosplit_reserve,
+            reserve_per_device=(
+                None
+                if (single_device is not None or self.gpu_split)
+                else self.autosplit_reserve
+            ),
             use_per_device=self.gpu_split,
             callback=progress_callback,
             max_chunk_size=self.chunk_size,
