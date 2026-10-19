@@ -75,6 +75,7 @@ For Docker Compose, custom config mounts, or building the image locally, see the
 - OpenAI compatible API
 - Loading/unloading models
 - HuggingFace model downloading
+- Statistics page with live activity and counters kept across sessions
 - Embedding model support
 - JSON schema + Regex + EBNF support
 - AI Horde support

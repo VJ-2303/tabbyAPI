@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TabbyAPI · server statistics</title>
+<meta name="color-scheme" content="light dark">
+<link rel="stylesheet" href="stats.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="wrap topbar-inner">
+    <div class="brand">
+      <span class="brand-name">TabbyAPI</span>
+      <span class="brand-scope">statistics</span>
+    </div>
+    <div class="topbar-state">
+      <span class="state" id="state" role="status">
+        <span class="state-dot" aria-hidden="true"></span><span id="state-text">connecting</span>
+      </span>
+      <span class="dot-sep" aria-hidden="true">·</span>
+      <span class="mono" id="model-name">no model loaded</span>
+      <span class="dot-sep" aria-hidden="true">·</span>
+      <span class="mono" id="up-time">—</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <p class="alert" id="alert" hidden></p>
+
+  <form class="gate" id="gate" hidden>
+    <label for="gate-key">API key</label>
+    <input id="gate-key" type="password" autocomplete="off" spellcheck="false" placeholder="from api_tokens.yml">
+    <button type="submit">Connect</button>
+  </form>
+
+  <section class="band" aria-labelledby="now-h">
+    <h2 class="band-title" id="now-h">now</h2>
+
+    <div class="live">
+      <div class="live-hero">
+        <p class="hero-figure">
+          <span class="hero-number mono" id="hero-rate">—</span>
+          <span class="hero-unit">tokens/s</span>
+        </p>
+        <p class="hero-note mono" id="hero-note">connecting</p>
+        <svg class="spark" id="spark" viewBox="0 0 640 64" preserveAspectRatio="none" aria-hidden="true">
+          <path class="spark-area" id="spark-area" d=""></path>
+          <path class="spark-line" id="spark-line" d=""></path>
+        </svg>
+      </div>
+
+      <div class="live-side">
+        <div class="readout" id="cache"></div>
+        <div class="readout" id="gpu"></div>
+      </div>
+    </div>
+
+    <div class="jobs" id="jobs"></div>
+  </section>
+
+  <section class="band" aria-labelledby="counts-h">
+    <h2 class="band-title" id="counts-h">counts</h2>
+    <table class="table totals">
+      <thead>
+        <tr><th scope="col">counter</th><th scope="col" class="num">this run</th><th scope="col" class="num">all time</th></tr>
+      </thead>
+      <tbody id="totals-body"></tbody>
+    </table>
+    <p class="note mono" id="finish-note"></p>
+  </section>
+
+  <section class="band" aria-labelledby="history-h">
+    <h2 class="band-title" id="history-h">history</h2>
+    <figure class="chart" id="chart-hour">
+      <figcaption class="chart-title">tokens generated per hour</figcaption>
+      <svg id="hour-svg" viewBox="0 0 720 110" preserveAspectRatio="none" role="img" aria-label="Tokens generated per hour"></svg>
+      <div class="axis mono" id="hour-axis"></div>
+    </figure>
+    <figure class="chart" id="chart-day">
+      <figcaption class="chart-title">tokens generated per day</figcaption>
+      <svg id="day-svg" viewBox="0 0 720 70" preserveAspectRatio="none" role="img" aria-label="Tokens generated per day"></svg>
+      <div class="axis mono" id="day-axis"></div>
+    </figure>
+    <p class="note mono" id="tracking"></p>
+  </section>
+
+  <section class="band" id="band-models" aria-labelledby="models-h">
+    <h2 class="band-title" id="models-h">models</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">model</th>
+          <th scope="col" class="num opt">loads</th>
+          <th scope="col" class="num">requests</th>
+          <th scope="col" class="num">generated</th>
+          <th scope="col" class="num opt">processed</th>
+          <th scope="col" class="num opt">last loaded</th>
+        </tr>
+      </thead>
+      <tbody id="models-body"></tbody>
+    </table>
+  </section>
+
+  <section class="band" id="band-recent" aria-labelledby="recent-h">
+    <h2 class="band-title" id="recent-h">recent requests</h2>
+    <table class="table">
+      <thead>
+        <tr>
+          <th scope="col">time</th>
+          <th scope="col">label</th>
+          <th scope="col" id="recent-model-head" hidden>model</th>
+          <th scope="col" class="num opt">prompt</th>
+          <th scope="col" class="num">generated</th>
+          <th scope="col" class="num">tokens/s</th>
+          <th scope="col">finished</th>
+        </tr>
+      </thead>
+      <tbody id="recent-body"></tbody>
+    </table>
+    <p class="note mono" id="recent-note"></p>
+  </section>
+
+  <section class="band" id="band-incidents" aria-labelledby="incidents-h">
+    <h2 class="band-title" id="incidents-h">errors</h2>
+    <ul class="incidents" id="incidents"></ul>
+  </section>
+
+  <footer class="foot">
+    <p>
+      Live values are read from the running engine; counters are kept in
+      <span class="mono">logs/stats.json</span> and survive restarts.
+      Raw data: <a href="/v1/stats" class="mono">/v1/stats</a>.
+    </p>
+  </footer>
+
+</div>
+
+<script src="stats.js"></script>
+</body>
+</html>

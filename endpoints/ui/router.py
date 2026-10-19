@@ -32,19 +32,29 @@ class ClientFiles(StaticFiles):
         return response
 
 
-def mount_ui(app: FastAPI, path: str = "/ui"):
+def mount_client(app: FastAPI, path: str, directory: pathlib.Path):
     """
-    Mount the chat client under the given path.
+    Serve a static client under the given path, at `path/` itself.
 
-    The client is plain HTML, CSS and JavaScript that talks to the regular API
-    from the browser, so the server does no work for it beyond sending the
-    files. The files themselves need no auth: they hold no secrets, and the
-    client asks for an API key before it calls anything.
+    The files need no auth: they hold no secrets, and the client asks for an
+    API key before it calls anything.
     """
 
     @app.get(path, include_in_schema=False)
-    async def ui_redirect():
-        # Relative asset URLs in index.html need the trailing slash
+    async def client_redirect():
+        # Relative asset URLs in the page need the trailing slash
         return RedirectResponse(f"{path}/")
 
-    app.mount(path, ClientFiles(directory=STATIC_DIR, html=True), name="ui")
+    app.mount(path, ClientFiles(directory=directory, html=True), name=path.strip("/"))
+
+
+def mount_ui(app: FastAPI, path: str = "/ui"):
+    """Mount the chat client, plain HTML, CSS and JavaScript talking to the API."""
+
+    mount_client(app, path, STATIC_DIR)
+
+
+def mount_stats(app: FastAPI, path: str = "/stats"):
+    """Mount the statistics page."""
+
+    mount_client(app, path, STATIC_DIR / "stats")

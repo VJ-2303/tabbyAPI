@@ -55,6 +55,11 @@ network:
   # regular API, so it does nothing until a browser opens it.
   web_ui: true
 
+  # Serve the statistics page at /stats (default: True).
+  # Live server activity and the counters kept in logs/stats.json across
+  # sessions, read from /v1/stats.
+  stats_page: true
+
 # Options for logging
 logging:
   # Enable prompt logging (default: False).

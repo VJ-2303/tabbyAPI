@@ -112,6 +112,14 @@ class NetworkConfig(BaseConfigModel):
             "regular API, so it does nothing until a browser opens it."
         ),
     )
+    stats_page: Optional[bool] = Field(
+        True,
+        description=(
+            "Serve the statistics page at /stats (default: True).\n"
+            "Live server activity and the counters kept in logs/stats.json across\n"
+            "sessions, read from /v1/stats."
+        ),
+    )
 
     # Converts all strings in the api_servers list to lowercase
     # NOTE: Expand if more models need this validator

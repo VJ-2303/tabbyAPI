@@ -14,7 +14,7 @@ from common.tabby_config import config
 from endpoints.Kobold import router as KoboldRouter
 from endpoints.OAI import router as OAIRouter
 from endpoints.core.router import router as CoreRouter
-from endpoints.ui.router import mount_ui
+from endpoints.ui.router import mount_stats, mount_ui
 
 
 def setup_app(host: Optional[str] = None, port: Optional[int] = None):
@@ -83,6 +83,12 @@ def setup_app(host: Optional[str] = None, port: Optional[int] = None):
             if not auth.DISABLE_AUTH and auth.AUTH_KEYS:
                 link += "#key=" + quote(auth.AUTH_KEYS.admin_key, safe="")
             logger.info(f"Chat client at {link}")
+
+    if config.network.stats_page:
+        mount_stats(app)
+
+        if host is not None:
+            logger.info(f"Server statistics at http://{host}:{port}/stats/")
 
     return app
 

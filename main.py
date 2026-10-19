@@ -20,6 +20,7 @@ from common.networking import port_bind_error
 from common.optional_dependencies import dependencies
 from common.signals import signal_handler
 from common.status_display import status_display
+from common.stats import stats as stats_ledger
 from common.tabby_config import config
 
 
@@ -85,6 +86,19 @@ async def entrypoint_async():
             "intentional."
         )
 
+    # Resume the counters before anything is loaded or served, so the record of
+    # the first model load and request lands in the restored document
+    stats_status = await stats_ledger.load()
+    if stats_status == "corrupt":
+        logger.warning(
+            f"Could not read {stats_ledger.path}; statistics start over from this run."
+        )
+    elif stats_status == "resumed":
+        logger.info(
+            f"Resumed statistics: {stats_ledger.lifetime['requests']:,} requests "
+            f"over {stats_ledger.doc['sessions'] - 1} earlier run(s)."
+        )
+
     # If an initial model name is specified, create a container
     # and load the model
     model_name = config.model.model_name
@@ -126,10 +140,19 @@ async def entrypoint_async():
     if config.logging.log_live_status:
         status_display.start()
 
+    # Keep the counters on disk while the server runs, not just at shutdown
+    stats_saver = asyncio.create_task(stats_ledger.periodic_save())
+
     try:
         await start_api(host, port)
     finally:
         await status_display.stop()
+        stats_saver.cancel()
+
+        try:
+            await stats_ledger.save_if_dirty()
+        except OSError as ex:
+            logger.warning(f"Could not write {stats_ledger.path}: {ex}")
 
     # Uvicorn has finished serving; unload any loaded models so pending
     # jobs are cancelled and the generator is closed cleanly

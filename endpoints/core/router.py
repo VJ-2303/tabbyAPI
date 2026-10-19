@@ -18,6 +18,7 @@ from common.networking import (
     run_with_request_disconnect,
 )
 from common.tabby_config import config
+from common.stats import stats as stats_ledger
 from common.templating import PromptTemplate, get_all_templates
 from common.utils import unwrap
 from common.health import HealthManager
@@ -43,6 +44,7 @@ from endpoints.core.types.sampler_overrides import (
     SamplerOverrideListResponse,
     SamplerOverrideSwitchRequest,
 )
+from endpoints.core.types.stats import StatsResponse
 from endpoints.core.types.template import TemplateList, TemplateSwitchRequest
 from endpoints.core.types.token import (
     TokenDecodeRequest,
@@ -102,6 +104,17 @@ async def service_info():
             },
         }
     )
+
+
+# Statistics endpoint
+@router.get("/v1/stats", dependencies=[Depends(check_api_key)])
+async def server_stats() -> StatsResponse:
+    """
+    Returns what the server has done: live activity, counters for this run and
+    over every session, and the history behind them.
+    """
+
+    return StatsResponse.model_validate(await stats_ledger.snapshot())
 
 
 # Model list endpoint
