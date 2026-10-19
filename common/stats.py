@@ -369,7 +369,7 @@ class StatsLedger:
 
         self._dirty = True
 
-    def record_embeddings(self, *, tokens: int = 0, inputs: int = 0, seconds: float = 0.0):
+    def record_embeddings(self, *, tokens: int = 0, seconds: float = 0.0):
         """Count one embeddings request."""
 
         for counters in (self.session, self.lifetime):
@@ -477,16 +477,17 @@ class StatsLedger:
 
         return view
 
-    async def snapshot(self) -> dict:
+    async def snapshot(self, container=None) -> dict:
         """
         A full reading of the server: live values gathered from the running
         server where it has them, counters from here. Every source is optional,
-        so the page still renders while nothing is loaded.
+        so the page still renders while nothing is loaded. The loaded model's
+        container is passed in by the endpoint, which keeps the dependency
+        between this module and the model one-way.
         """
 
         from common import hardware
         from common.health import HealthManager
-        from common.model import container
 
         incidents = []
         try:
@@ -530,7 +531,7 @@ class StatsLedger:
             )
 
         cache = status_display.cache_stats()
-        view = {"jobs": jobs, "active": len(jobs)}
+        view: dict = {"jobs": jobs, "active": len(jobs)}
         if cache:
             view["queued"] = _as_int(cache.get("pending_jobs"))
             view["active"] = max(len(jobs) - view["queued"], 0)

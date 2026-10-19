@@ -114,7 +114,7 @@ async def server_stats() -> StatsResponse:
     over every session, and the history behind them.
     """
 
-    return StatsResponse.model_validate(await stats_ledger.snapshot())
+    return StatsResponse.model_validate(await stats_ledger.snapshot(model.container))
 
 
 # Model list endpoint

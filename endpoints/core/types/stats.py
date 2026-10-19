@@ -38,7 +38,9 @@ class StatsModel(BaseModel):
     chunk_size: Optional[int] = Field(None, description="Prefill chunk size")
     use_vision: Optional[bool] = Field(None, description="Whether the model takes images")
     prompt_template: Optional[str] = Field(None, description="Name of the chat template")
-    n_ctx_train: Optional[int] = Field(None, description="Context length the model was trained with")
+    n_ctx_train: Optional[int] = Field(
+        None, description="Context length the model was trained with"
+    )
     n_vocab: Optional[int] = Field(None, description="Vocabulary size")
     n_embd: Optional[int] = Field(None, description="Embedding dimension")
     size_bytes: Optional[int] = Field(None, description="Size of the weight files")

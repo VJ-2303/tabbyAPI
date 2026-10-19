@@ -41,7 +41,7 @@ class SnapshotSchemaTests(unittest.TestCase):
             metrics(), model="llama-8b", label="#1 chat/completions", context_len=900
         )
         self.ledger.record_model_load("llama-8b")
-        self.ledger.record_embeddings(tokens=120, inputs=2, seconds=0.3)
+        self.ledger.record_embeddings(tokens=120, seconds=0.3)
 
         response = StatsResponse.model_validate(
             self.ledger.build_snapshot(

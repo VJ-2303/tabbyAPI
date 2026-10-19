@@ -63,7 +63,7 @@ async def get_embeddings(data: EmbeddingsRequest, request: Request) -> dict:
 
     usage = embedding_data.get("usage")
     stats_ledger.record_embeddings(
-        tokens=usage, inputs=len(data.input), seconds=time.time() - started
+        tokens=usage, seconds=time.time() - started
     )
 
     response = EmbeddingsResponse(

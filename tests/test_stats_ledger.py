@@ -121,7 +121,7 @@ class RecordingTests(LedgerTestCase):
         self.assertEqual(entry["last_loaded"], self.clock.timestamp)
 
     async def test_embeddings_are_recorded(self):
-        self.ledger.record_embeddings(tokens=120, inputs=3, seconds=0.4)
+        self.ledger.record_embeddings(tokens=120, seconds=0.4)
 
         self.assertEqual(self.ledger.lifetime["embedding_requests"], 1)
         self.assertEqual(self.ledger.lifetime["embedding_tokens"], 120)
@@ -332,7 +332,7 @@ class SnapshotTests(LedgerTestCase):
 
     async def test_snapshot_counts_are_json_serializable(self):
         self.ledger.record_generation(metrics(), model="llama-8b")
-        self.ledger.record_embeddings(tokens=5, inputs=1, seconds=0.1)
+        self.ledger.record_embeddings(tokens=5, seconds=0.1)
 
         json.dumps(self.ledger.build_snapshot())
         json.dumps(self.ledger.doc)
