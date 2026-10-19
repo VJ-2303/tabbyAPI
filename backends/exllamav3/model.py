@@ -1,4 +1,5 @@
 import asyncio
+from collections import OrderedDict
 from dataclasses import dataclass
 import gc
 import pathlib
@@ -21,6 +22,7 @@ from exllamav3 import (
     AsyncJob,
     Cache,
     Config,
+    Generator,
     Model,
     Tokenizer,
 )
@@ -60,6 +62,17 @@ from endpoints.OAI.utils.tools import (
     detect_tool_format,
     is_supported_format,
 )
+
+
+# Recent prompt encodings kept per container. The same text is routinely
+# encoded twice in a row: a streaming request measures its prompt before the
+# response commits to HTTP 200 and then encodes it again for the job, and clients
+# commonly measure a context with /v1/token/encode before sending it. At about
+# a microsecond per token that is half a second twice over for a 500k-token
+# prompt, against a few milliseconds of engine work when the pages are cached.
+# An entry holds the prompt text and its ids (8 bytes per token), so the cache
+# tops out around 100 MB with twenty 500k-token prompts
+ENCODE_CACHE_ENTRIES = 20
 
 
 def _merge_stream_results(results: List[dict]) -> dict:
@@ -131,6 +144,50 @@ def reasoning_tag_conflicts(end_tag: Optional[str], strings: list) -> List[str]:
     return [s for s in strings if isinstance(s, str) and tag in s.lower()]
 
 
+def engine_supports_disk_cache() -> bool:
+    """
+    Whether the installed engine has the persistent disk cache tier
+    (exllamav3 1.6.2). Checked by attribute so a development checkout of the
+    engine qualifies regardless of its version string.
+    """
+
+    return hasattr(Generator, "flush_cache_to_disk")
+
+
+def disk_cache_kwargs(memory_config) -> dict:
+    """
+    The generator arguments for the persistent disk cache tier configured
+    under memory:, or an empty dict when it is disabled or can't be used.
+    The tier writes through from the system memory K/V tier, so it needs one.
+    """
+
+    directory = memory_config.disk_cache_dir
+    if not directory:
+        return {}
+
+    if not engine_supports_disk_cache():
+        xlogger.warning(
+            "disk_cache_dir needs ExLlamaV3 1.6.2 or later; the installed version "
+            "has no disk cache tier. Continuing without it."
+        )
+        return {}
+
+    if not memory_config.sysmem_kv_cache:
+        xlogger.warning(
+            "disk_cache_dir is set but sysmem_kv_cache is 0. The disk cache writes "
+            "through from the system memory K/V cache, so it needs one. "
+            "Continuing without the disk cache."
+        )
+        return {}
+
+    return {
+        "disk_cache_dir": str(pathlib.Path(directory).expanduser()),
+        "disk_cache_size": memory_config.disk_cache_size * 1024**2,
+        "disk_cache_flush_on_idle": bool(memory_config.disk_cache_flush_on_idle),
+        "disk_cache_checkpoint_interval": memory_config.disk_cache_checkpoint_interval,
+    }
+
+
 def _describe_reasoning_settings(reasoning_params: BaseSamplerRequest) -> str:
     """The reasoning-phase overrides as "name: value (source)" items."""
 
@@ -180,6 +237,7 @@ class ExllamaV3Container:
     draft_model: Optional[Model] = None
     draft_cache: Optional[Cache] = None
     tokenizer: Optional[Tokenizer] = None
+    bos_token_id: Optional[int] = None
     config: Optional[Config] = None
     draft_config: Optional[Config] = None
     generator: Optional[AsyncGenerator] = None
@@ -202,8 +260,12 @@ class ExllamaV3Container:
     draft_num_tokens: Optional[int] = None
     dynamic_draft: Optional[bool] = False
     ngram_match_min: int = 0
+    hybrid_draft_tokens: int = 0
     recurrent_checkpoint_interval: Optional[int] = None
     recurrent_checkpoint_interval_pp: Optional[int] = None
+    # Generator arguments for the persistent disk cache tier, resolved per load
+    # from memory.disk_cache_* (empty when disabled); never mutated in place
+    disk_cache_kwargs: dict = {}
 
     def __init__(self):
         # Mutable state must be created per instance. A class-level default
@@ -213,6 +275,7 @@ class ExllamaV3Container:
         self.load_lock = asyncio.Lock()
         self.load_condition = asyncio.Condition()
         self.autosplit_reserve = [96 / 1024]
+        self.encode_cache = OrderedDict()
 
     # Required methods
     @classmethod
@@ -245,13 +308,20 @@ class ExllamaV3Container:
         self = cls()
 
         # Make sure ExllamaV3 is up to date
-        check_package_version("exllamav3", "1.5.4")
+        check_package_version("exllamav3", "1.6.1")
 
         self.model_dir = model_directory
         self.hf_model = hf_model
-        self.config = Config.from_directory(str(model_directory.resolve()))
+        # Optional RYS layer map (list of layer indices or a string spec such
+        # as "0..6,4..6"); must be set when the config is created so the model
+        # is built with the mapped layer order
+        self.config = Config.from_directory(
+            str(model_directory.resolve()),
+            layer_map=kwargs.get("layer_map"),
+        )
         self.model = Model.from_config(self.config)
         self.tokenizer = Tokenizer.from_config(self.config)
+        self.bos_token_id = self.find_bos_token()
 
         # Set CPU offload layers
         self.config.infer_params.moe_cpu_offload = unwrap(kwargs.get("cpu_moe_offload_layers"), 0)
@@ -276,6 +346,22 @@ class ExllamaV3Container:
         cpu_moe_threads = kwargs.get("cpu_moe_threads")
         if cpu_moe_threads is not None:
             self.config.infer_params.moe_cpu_threads = cpu_moe_threads
+
+        # Experimental: back the CPU MoE worker's expert arena with shared,
+        # page-locked memory, so streamed prefill DMAs experts straight from
+        # it and the expert split can promote experts into spare VRAM slots.
+        # None defers to the EXL3_MOE_PINNED_ARENA env variable
+        cpu_moe_pinned_arena = kwargs.get("cpu_moe_pinned_arena")
+        if cpu_moe_pinned_arena is not None:
+            self.config.infer_params.moe_cpu_pinned_arena = cpu_moe_pinned_arena
+        if getattr(self.config.infer_params, "moe_cpu_pinned_arena", False):
+            if self.config.infer_params.moe_cpu_offload or self.config.infer_params.moe_cpu_split:
+                xlogger.info("Using a pinned expert arena for CPU MoE (cpu_moe_pinned_arena).")
+            elif cpu_moe_pinned_arena:
+                xlogger.warning(
+                    "cpu_moe_pinned_arena has no effect without cpu_moe_offload_layers "
+                    "or cpu_moe_split_experts."
+                )
 
         # Load an n-gram embedding table (PLE models) fully into system RAM
         # instead of streaming rows from disk per forward. Must be set before
@@ -334,6 +420,13 @@ class ExllamaV3Container:
         )
         self.dynamic_draft = draft_args.get("dynamic_draft", False)
 
+        # Long suffix-match drafting on top of whichever drafting mode is
+        # active, or on its own: a job repeating its own context verbatim gets
+        # this many tokens of the earlier continuation as the round's draft
+        self.hybrid_draft_tokens = unwrap(draft_args.get("hybrid_draft_tokens"), 0)
+        if self.hybrid_draft_tokens < 0:
+            raise ValueError("hybrid_draft_tokens must be 0 (off) or greater")
+
         # Always disable draft if params are incorrectly configured
         if draft_mode == "model" and draft_args and draft_model_name is None:
             xlogger.warning(
@@ -353,6 +446,9 @@ class ExllamaV3Container:
                 draft_model_path = draft_model_path / draft_model_name
                 self.draft_model_dir = draft_model_path
                 self.draft_config = Config.from_directory(str(draft_model_path.resolve()))
+                self.draft_config.infer_params.moe_cpu_pinned_arena = getattr(
+                    self.config.infer_params, "moe_cpu_pinned_arena", False
+                )
                 self.draft_model = Model.from_config(self.draft_config)
                 xlogger.info(f"Using draft model: {str(draft_model_path.resolve())}")
         else:
@@ -362,6 +458,11 @@ class ExllamaV3Container:
                 xlogger.info(
                     f"Using n-gram drafting with minimum match length {self.ngram_match_min}"
                 )
+        if self.hybrid_draft_tokens:
+            xlogger.info(
+                f"Using hybrid drafting: {self.hybrid_draft_tokens} tokens drafted from a "
+                "matching earlier passage of the context."
+            )
 
         # Turn off GPU split if the user is using 1 GPU
         gpu_count = torch.cuda.device_count()
@@ -498,6 +599,10 @@ class ExllamaV3Container:
                 "recurrent_checkpoint_interval settings are ignored because "
                 "the model has no recurrent layers."
             )
+
+        # Persistent disk cache tier (resolved once per load, so the warnings
+        # don't repeat when the generator is recreated)
+        self.disk_cache_kwargs = disk_cache_kwargs(config.memory)
 
         # Create cache
         cache_mode_default = "FP16"
@@ -794,11 +899,12 @@ class ExllamaV3Container:
             default_draft_tokens = 4
         else:
             default_draft_tokens = 0
+        # A recurrent model's rollback window (max_history) has to cover the
+        # widest verification pass a round can take, a hybrid draft included
+        draft_tokens = unwrap(self.draft_num_tokens, default_draft_tokens)
         batch_draft_args = {
             "max_batch_size": self.max_batch_size,
-            "max_history": (
-                self.draft_num_tokens if self.draft_num_tokens is not None else default_draft_tokens
-            ),
+            "max_history": max(draft_tokens, self.hybrid_draft_tokens),
         }
 
         if split_cache_mode:
@@ -956,6 +1062,7 @@ class ExllamaV3Container:
         draft_tokens = 0
         if self.use_draft_model or self.ngram_match_min:
             draft_tokens = unwrap(self.draft_num_tokens, 4)
+        draft_tokens = max(draft_tokens, self.hybrid_draft_tokens)
         max_q_len = max(8, draft_tokens + 1)
 
         finished = object()
@@ -1139,7 +1246,9 @@ class ExllamaV3Container:
                 num_draft_tokens=self.draft_num_tokens,
                 dynamic_draft_tokens=self.dynamic_draft,
                 ngram_match_min=self.ngram_match_min,
+                hybrid_draft_tokens=self.hybrid_draft_tokens,
                 **checkpoint_kwargs,
+                **self.disk_cache_kwargs,
             )
 
             # Update the state of the container var
@@ -1154,6 +1263,19 @@ class ExllamaV3Container:
                     "Using recurrent checkpoint intervals: "
                     f"{generator.recurrent_checkpoint_interval} tokens (generation), "
                     f"{generator.recurrent_checkpoint_interval_pp} tokens (prompt ingestion)."
+                )
+
+            # What the disk cache directory already holds for this model and
+            # cache configuration (from an earlier process, usually)
+            disk_cache = getattr(generator, "disk_page_cache", None)
+            if disk_cache is not None:
+                stats = generator.get_cache_stats()
+                xlogger.info(
+                    f"Disk cache: {disk_cache.dir} holds {stats['disk_pages']:,} pages "
+                    f"({stats['disk_cached_tokens']:,} reusable tokens) and "
+                    f"{stats['disk_states']:,} recurrent checkpoints, "
+                    f"{stats['disk_used_bytes'] / 1024**3:.2f} GB of "
+                    f"{stats['disk_max_bytes'] / 1024**3:.2f} GB."
                 )
         finally:
             # This means the generator is being recreated
@@ -1191,6 +1313,13 @@ class ExllamaV3Container:
             # Clear the image embedding cache
             clear_image_embedding_cache()
 
+            # Retire the generator while the cache tensors are still there:
+            # closing it persists what is only in VRAM to the disk cache, and
+            # releases the host tiers through the tensor-parallel ranks
+            if self.generator is not None:
+                await self.generator.close()
+                self.generator = None
+
             self.model.unload()
             self.model = None
             self.config = None
@@ -1207,11 +1336,6 @@ class ExllamaV3Container:
                 self.vision_model.unload()
                 self.vision_model = None
 
-            # Cleanup the generator from any pending jobs
-            if self.generator is not None:
-                await self.generator.close()
-                self.generator = None
-
             gc.collect()
             torch.cuda.empty_cache()
 
@@ -1222,6 +1346,67 @@ class ExllamaV3Container:
 
                 async with self.load_condition:
                     self.load_condition.notify_all()
+
+    def find_bos_token(self) -> Optional[int]:
+        """
+        The model's BOS token ID, or None if it has none. When the config files
+        don't name one, the tokenizer falls back to ID 1. That's right for
+        Mistral's <s>, but in GLM's vocabulary (4.7 onwards) it's a quotation
+        mark, so the fallback only counts if it's a special token.
+        """
+
+        bos_id = self.tokenizer.bos_token_id
+        if bos_id is None or self.hf_model.declares_bos_token():
+            return bos_id
+
+        token = self.tokenizer.tokenizer.get_added_tokens_decoder().get(bos_id)
+        return bos_id if token is not None and token.special else None
+
+    def encode_prompt(
+        self,
+        text: str,
+        add_bos: bool,
+        encode_special_tokens: bool = True,
+        embeddings: Optional[list] = None,
+    ) -> torch.Tensor:
+        """
+        Token IDs for a prompt as a (1, n) tensor, from the encode cache when the
+        same text was encoded recently with the same options. The tensor is
+        shared between callers and must not be modified in place (the engine
+        copies it into the job's own buffer). Prompts with multimodal
+        embeddings are never cached: their placeholder IDs belong to the
+        embeddings passed in.
+        """
+
+        if embeddings:
+            return self.tokenizer.encode(
+                text,
+                add_bos=add_bos,
+                encode_special_tokens=encode_special_tokens,
+                embeddings=embeddings,
+            )
+
+        # Containers are also built without __init__ in places
+        cache = getattr(self, "encode_cache", None)
+        if cache is None:
+            cache = self.encode_cache = OrderedDict()
+
+        key = (text, bool(add_bos), bool(encode_special_tokens))
+        ids = cache.get(key)
+        if ids is not None:
+            cache.move_to_end(key)
+            return ids
+
+        ids = self.tokenizer.encode(
+            text,
+            add_bos=add_bos,
+            encode_special_tokens=encode_special_tokens,
+            embeddings=[],
+        )
+        cache[key] = ids
+        while len(cache) > ENCODE_CACHE_ENTRIES:
+            cache.popitem(last=False)
+        return ids
 
     def encode_tokens(self, text: str, **kwargs) -> List[int]:
         """
@@ -1238,10 +1423,13 @@ class ExllamaV3Container:
         mm_embeddings: MultimodalEmbeddingWrapper = kwargs.get("embeddings")
         mm_embeddings_content = mm_embeddings.content if mm_embeddings else []
 
+        # A model without a BOS token gets none, even if the request asks
+        add_bos_token = unwrap(kwargs.get("add_bos_token"), self.hf_model.add_bos_token())
+
         return (
-            self.tokenizer.encode(
+            self.encode_prompt(
                 text,
-                add_bos=unwrap(kwargs.get("add_bos_token"), self.hf_model.add_bos_token()),
+                add_bos=add_bos_token and self.bos_token_id is not None,
                 encode_special_tokens=unwrap(kwargs.get("encode_special_tokens"), True),
                 embeddings=mm_embeddings_content,
             )
@@ -1280,7 +1468,9 @@ class ExllamaV3Container:
         """
 
         return {
-            "bos_token": self.tokenizer.bos_token if add_bos_token else "",
+            "bos_token": (
+                self.tokenizer.bos_token if add_bos_token and self.bos_token_id is not None else ""
+            ),
             "eos_token": self.tokenizer.eos_token if not ban_eos_token else "",
             "pad_token": self.tokenizer.pad_token,
             "unk_token": self.tokenizer.unk_token,
@@ -1292,13 +1482,13 @@ class ExllamaV3Container:
         params: BaseSamplerRequest,
         mm_embeddings: Optional[MultimodalEmbeddingWrapper] = None,
     ):
-        context_len = len(
-            self.encode_tokens(
-                prompt,
-                add_bos_token=unwrap(params.add_bos_token, self.hf_model.add_bos_token()),
-                embeddings=mm_embeddings,
-            )
-        )
+        # Only the count is needed, and the encoding is reused by the job
+        add_bos_token = unwrap(params.add_bos_token, self.hf_model.add_bos_token())
+        context_len = self.encode_prompt(
+            prompt,
+            add_bos=add_bos_token and self.bos_token_id is not None,
+            embeddings=mm_embeddings.content if mm_embeddings else [],
+        ).numel()
         max_tokens = unwrap(params.max_tokens, 0)
         if max_tokens <= 0:
             max_tokens = self.max_seq_len - context_len - 1
@@ -1526,7 +1716,11 @@ class ExllamaV3Container:
         # a BOS post-processor (Llama-3 style) prepend BOS regardless of
         # add_bos, which would corrupt the injection
         ids = self.tokenizer.encode(text, encode_special_tokens=True, add_bos=False)
-        if ids.shape[-1] > 0 and ids[0, 0].item() == self.tokenizer.bos_token_id:
+        if (
+            ids.shape[-1] > 0
+            and self.bos_token_id is not None
+            and ids[0, 0].item() == self.bos_token_id
+        ):
             ids = ids[:, 1:]
         if ids.shape[-1] == 0:
             return False
@@ -1774,6 +1968,7 @@ class ExllamaV3Container:
         prompts = [prompt]
         stop_conditions = params.stop
         add_bos_token = unwrap(params.add_bos_token, self.hf_model.add_bos_token())
+        add_bos_token = add_bos_token and self.bos_token_id is not None
         grammar_handler = ExLlamaV3Grammar()
 
         # Get multimodal embeddings if present
@@ -1789,7 +1984,7 @@ class ExllamaV3Container:
         stop_conditions = list(set(stop_conditions))
 
         input_ids = [
-            self.tokenizer.encode(
+            self.encode_prompt(
                 prompt,
                 add_bos=add_bos_token,
                 encode_special_tokens=True,
@@ -2097,7 +2292,7 @@ class ExllamaV3Container:
             log_generation_params(
                 label,
                 request_id=request_id,
-                bos_token_id=self.tokenizer.bos_token_id,
+                bos_token_id=self.bos_token_id,
                 eos_token_id=eos_tokens,
                 prompt=prompt,
                 **params.model_dump(exclude={"prompt"}),
