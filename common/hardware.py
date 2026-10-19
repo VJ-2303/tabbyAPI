@@ -80,6 +80,36 @@ def torch_gpu_problem() -> Optional[str]:
     return None
 
 
+def gpu_memory_stats() -> Optional[list[dict]]:
+    """
+    Used and total VRAM per GPU, or None when torch can't report it. Something
+    else already using the device, or a driver without memory info, is not an
+    error worth surfacing: the page just shows no memory figures.
+    """
+
+    try:
+        torch = _torch()
+        if not torch.cuda.is_available():
+            return None
+
+        stats = []
+        for index in range(torch.cuda.device_count()):
+            free, total = torch.cuda.mem_get_info(index)
+            stats.append(
+                {
+                    "index": index,
+                    "name": torch.cuda.get_device_name(index),
+                    "used_bytes": int(total - free),
+                    "total_bytes": int(total),
+                    "free_bytes": int(free),
+                }
+            )
+
+        return stats or None
+    except Exception:
+        return None
+
+
 def hardware_supports_exllamav3(gpu_device_list: list[int]):
     """
     Check whether all GPUs in the list can run ExLlamaV3.
