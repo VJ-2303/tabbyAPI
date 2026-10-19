@@ -11,6 +11,11 @@ const STORE = "tabby-ui."; // shared with the chat client at /ui
 
 const $ = (id) => document.getElementById(id);
 const NUM = new Intl.NumberFormat();
+// Formatters are built once: constructing an Intl formatter is the expensive
+// part, so the label helpers below reuse these instead of building one per call
+const CLOCK_FORMAT = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const HOUR_FORMAT = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
+const DAY_FORMAT = new Intl.DateTimeFormat([], { month: "short", day: "numeric" });
 
 // ---------------------------------------------------------------------------
 // Settings, shared with the chat client
@@ -86,22 +91,15 @@ function duration(seconds) {
 
 function clock(epochSeconds) {
   if (!epochSeconds) return "—";
-  return new Date(epochSeconds * 1000).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  return CLOCK_FORMAT.format(new Date(epochSeconds * 1000));
 }
 
 function hourLabel(epochSeconds) {
-  return new Date(epochSeconds * 1000).toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return HOUR_FORMAT.format(new Date(epochSeconds * 1000));
 }
 
 function dayLabel(epochSeconds) {
-  return new Date(epochSeconds * 1000).toLocaleDateString([], { month: "short", day: "numeric" });
+  return DAY_FORMAT.format(new Date(epochSeconds * 1000));
 }
 
 function percent(part, whole) {
@@ -189,30 +187,40 @@ function renderSpark(values) {
 }
 
 // Bars for a series of buckets. The newest bucket is a partial hour or day, so
-// it is drawn in the quieter tone
+// it is drawn in the quieter tone. The bar nodes are created once and updated
+// in place while the count holds, so a steady chart moves its heights instead
+// of rebuilding its elements on every poll
 function renderBars(svg, buckets, valueKey, width, height) {
-  while (svg.firstChild) svg.removeChild(svg.firstChild);
-
   const max = Math.max(...buckets.map((bucket) => bucket[valueKey] || 0), 1);
   const gap = 2;
   const barWidth = (width - gap * (buckets.length - 1)) / buckets.length;
 
-  svg.append(
-    (() => {
-      const baseline = svgEl("line");
-      baseline.setAttribute("class", "baseline");
-      baseline.setAttribute("x1", 0);
-      baseline.setAttribute("x2", width);
-      baseline.setAttribute("y1", height - 0.5);
-      baseline.setAttribute("y2", height - 0.5);
-      return baseline;
-    })()
-  );
+  let bars = svg.__bars;
+  if (!bars || bars.length !== buckets.length) {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+    const baseline = svgEl("line");
+    baseline.setAttribute("class", "baseline");
+    baseline.setAttribute("x1", 0);
+    baseline.setAttribute("x2", width);
+    baseline.setAttribute("y1", height - 0.5);
+    baseline.setAttribute("y2", height - 0.5);
+    svg.append(baseline);
+
+    bars = buckets.map(() => {
+      const rect = svgEl("rect");
+      rect.setAttribute("class", "barrect");
+      rect.append(svgEl("title"));
+      svg.append(rect);
+      return rect;
+    });
+    svg.__bars = bars;
+  }
 
   buckets.forEach((bucket, index) => {
+    const rect = bars[index];
     const value = bucket[valueKey] || 0;
     const barHeight = (value / max) * (height - 10);
-    const rect = svgEl("rect");
     rect.setAttribute("class", `barrect${index === buckets.length - 1 ? " is-quiet" : ""}`);
     rect.setAttribute("x", (index * (barWidth + gap)).toFixed(1));
     rect.setAttribute("width", barWidth.toFixed(1));
@@ -220,12 +228,9 @@ function renderBars(svg, buckets, valueKey, width, height) {
     rect.setAttribute("height", Math.max(barHeight, 0).toFixed(1));
 
     const when = bucket.hour ? hourLabel(bucket.hour) : dayLabel(bucket.day);
-    const tooltip = svgEl("title");
-    tooltip.textContent = `${when} · ${int(value)} tokens · ${int(bucket.requests)} request(s) · ${int(
+    rect.firstChild.textContent = `${when} · ${int(value)} tokens · ${int(bucket.requests)} request(s) · ${int(
       bucket.processed_tokens
     )} processed`;
-    rect.append(tooltip);
-    svg.append(rect);
   });
 }
 
