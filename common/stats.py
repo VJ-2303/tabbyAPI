@@ -64,14 +64,6 @@ def _rate(tokens: int, seconds: float) -> Optional[float]:
     return round(tokens / seconds, 2)
 
 
-def _percentile(values: list[float], fraction: float) -> Optional[float]:
-    if not values:
-        return None
-    ordered = sorted(values)
-    index = round((len(ordered) - 1) * fraction)
-    return round(ordered[index], 2)
-
-
 def _blank_counters() -> dict:
     return {
         "requests": 0,
@@ -155,6 +147,10 @@ class StatsLedger:
         # Session-only rate samples: percentiles of a persisted ring would
         # describe an arbitrary slice of history, so they aren't carried over
         self._tps_samples: deque = deque(maxlen=TPS_SAMPLE_MAX)
+        # The percentiles of those samples, recomputed only when a sample lands
+        self._tps_version = 0
+        self._tps_percentile_version = 0
+        self._tps_percentile_cache = (None, None)
 
     # Document access
 
@@ -326,6 +322,7 @@ class StatsLedger:
 
         if gen_time > 0 and gen_tokens > 0:
             self._tps_samples.append(gen_tokens / gen_time)
+            self._tps_version += 1
 
         self._roll_buckets()
         self._add_to_buckets(counts, requests=1)
@@ -371,6 +368,7 @@ class StatsLedger:
             del buckets[:-cap]
 
     def _add_to_buckets(self, counts: dict, requests: int = 0, embedding_requests: int = 0):
+        # `counts` is already normalized at the call sites, so no re-coercion here
         for bucket in (self.hourly[-1], self.daily[-1]):
             bucket["requests"] += requests
             bucket["embedding_requests"] += embedding_requests
@@ -381,7 +379,7 @@ class StatsLedger:
                 "cached_tokens",
                 "embedding_tokens",
             ):
-                bucket[name] += _as_int(counts.get(name))
+                bucket[name] += counts.get(name, 0)
 
     # Snapshots
 
@@ -420,6 +418,30 @@ class StatsLedger:
             "incidents": incidents or [],
         }
 
+    def _tps_percentiles(self) -> tuple:
+        """Median and 95th percentile of this session's rates, from one sort.
+
+        Computed once per new sample, so a snapshot between generations reads a
+        cached pair instead of re-sorting up to 500 rates.
+        """
+        if self._tps_percentile_version == self._tps_version:
+            return self._tps_percentile_cache
+
+        samples = list(self._tps_samples)
+        if len(samples) < TPS_PERCENTILE_MIN_SAMPLES:
+            result = (None, None)
+        else:
+            ordered = sorted(samples)
+            last = len(ordered) - 1
+            result = (
+                round(ordered[round(last * 0.5)], 2),
+                round(ordered[round(last * 0.95)], 2),
+            )
+
+        self._tps_percentile_cache = result
+        self._tps_percentile_version = self._tps_version
+        return result
+
     def _scope_view(self, counters: dict, uptime: Optional[int] = None) -> dict:
         view = dict(counters)
         view["finish"] = dict(counters["finish"])
@@ -429,10 +451,9 @@ class StatsLedger:
         )
 
         # Present but null when there is too little to say, like the rates
-        samples = list(self._tps_samples)
-        enough = len(samples) >= TPS_PERCENTILE_MIN_SAMPLES
-        view["gen_tokens_per_sec_p50"] = _percentile(samples, 0.5) if enough else None
-        view["gen_tokens_per_sec_p95"] = _percentile(samples, 0.95) if enough else None
+        p50, p95 = self._tps_percentiles()
+        view["gen_tokens_per_sec_p50"] = p50
+        view["gen_tokens_per_sec_p95"] = p95
 
         if uptime is not None:
             view["uptime"] = uptime
